@@ -3,3 +3,5 @@
 Leia `../../AGENTS.md` e `../../.docs/index.md` antes de analisar ou alterar este repositório. Use a skill pertinente em `../../.agents/skills/` e trate o código desta solução como fonte de verdade operacional.
 
 Esta API expõe o domínio de alimentação e PDV em `api/v1/...`; o frontend deve consumi-la somente através do BFF. Novas entidades devem herdar `BaseEntity<long>` e avaliar explicitamente `ISoftDeletableEntity<long>`.
+
+A Home HTML é obrigatória: preserve `HomeController : BaseController`, a rota `api/home`, a ação herdada `Index()` e o redirecionamento de `/` para `/api/home` em produção. `/api/home/status` é apenas o endpoint JSON.

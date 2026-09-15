@@ -33,6 +33,9 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthChecks("/health");
 app.MapControllers();
-app.MapGet("/", (IHostEnvironment environment) => Results.Redirect(environment.IsDevelopment() ? "/swagger" : "/api/home/status"));
+app.MapGet("/", (IHostEnvironment environment) =>
+{
+    return Results.Redirect(environment.IsDevelopment() ? "/swagger" : "/api/home");
+});
 
 await app.RunAsync();

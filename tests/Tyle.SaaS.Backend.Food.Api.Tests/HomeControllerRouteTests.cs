@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Tyle.Packages.Bases.Controllers;
 using Tyle.SaaS.Backend.Food.Api.Controllers;
 
 namespace Tyle.SaaS.Backend.Food.Api.Tests;
@@ -14,5 +15,18 @@ public sealed class HomeControllerRouteTests
 
         Assert.Equal("api/home", route.Template);
         Assert.Equal("status", httpGet.Template);
+    }
+
+    [Fact]
+    public void HomeController_RendersHtmlHomeThroughBaseController()
+    {
+        var controller = new HomeController();
+        var result = controller.Index();
+
+        var content = Assert.IsType<ContentResult>(result);
+
+        Assert.True(typeof(BaseController).IsAssignableFrom(typeof(HomeController)));
+        Assert.Equal("text/html", content.ContentType);
+        Assert.Contains("Tyle Food API", content.Content);
     }
 }
