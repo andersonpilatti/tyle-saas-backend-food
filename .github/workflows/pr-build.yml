@@ -1,0 +1,58 @@
+name: Pull Request Build
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  build:
+    name: Restore, Build and Test
+    runs-on: ubuntu-latest
+    env:
+      GH_PACKAGES_USERNAME: ${{ vars.GH_PACKAGES_USERNAME }}
+      GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Locate solution
+        id: solution
+        shell: bash
+        run: |
+          solution_file="$(find . -maxdepth 1 -name '*.slnx' -print -quit)"
+
+          if [ -z "$solution_file" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No .NET solution found; workflow kept as template until the solution is scaffolded."
+            exit 0
+          fi
+
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "path=$solution_file" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET
+        if: steps.solution.outputs.found == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        if: steps.solution.outputs.found == 'true'
+        run: dotnet restore "${{ steps.solution.outputs.path }}"
+
+      - name: Build solution
+        if: steps.solution.outputs.found == 'true'
+        run: dotnet build "${{ steps.solution.outputs.path }}" --configuration "${{ env.BUILD_CONFIGURATION }}" --no-restore
+
+      - name: Run tests
+        if: steps.solution.outputs.found == 'true'
+        run: dotnet test "${{ steps.solution.outputs.path }}" --configuration "${{ env.BUILD_CONFIGURATION }}" --no-build --verbosity normal

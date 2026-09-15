@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="Tyle.Packages.Auth" />
+    <PackageReference Include="Tyle.Packages.Bases" />
+    <PackageReference Include="Tyle.Packages.Results.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tyle.SaaS.Backend.Food.Application\Tyle.SaaS.Backend.Food.Application.csproj" />
+    <ProjectReference Include="..\Tyle.SaaS.Backend.Food.Infrastructure\Tyle.SaaS.Backend.Food.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

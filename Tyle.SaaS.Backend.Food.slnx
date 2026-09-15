@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Tyle.SaaS.Backend.Food.Api/Tyle.SaaS.Backend.Food.Api.csproj" />
+    <Project Path="src/Tyle.SaaS.Backend.Food.Application/Tyle.SaaS.Backend.Food.Application.csproj" />
+    <Project Path="src/Tyle.SaaS.Backend.Food.Domain/Tyle.SaaS.Backend.Food.Domain.csproj" />
+    <Project Path="src/Tyle.SaaS.Backend.Food.Infrastructure/Tyle.SaaS.Backend.Food.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Tyle.SaaS.Backend.Food.Api.Tests/Tyle.SaaS.Backend.Food.Api.Tests.csproj" />
+  </Folder>
+</Solution>

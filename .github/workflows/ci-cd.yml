@@ -1,0 +1,263 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  BUILD_CONFIGURATION: 'Release'
+  VERSION_TIMEZONE: 'America/Sao_Paulo'
+  IIS_APP_POOL_NAME: 'foods.tyle.com.br'
+  IIS_SITE_PATH: 'D:\apps\tyle.com.br\foods\current'
+  IIS_RELEASES_PATH: 'D:\apps\tyle.com.br\foods\releases'
+  IIS_LOGS_PATH: 'D:\apps\tyle.com.br\foods\logs'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    env:
+      GH_PACKAGES_USERNAME: ${{ vars.GH_PACKAGES_USERNAME }}
+      GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      app-version: ${{ steps.generate-version.outputs.version }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0  # Necessário para obter histórico completo
+
+    - name: Generate Version
+      id: generate-version
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        YEAR="$(TZ="$VERSION_TIMEZONE" date +%Y)"
+        MONTH_DAY=$((10#$(TZ="$VERSION_TIMEZONE" date +%m%d) + 30000))
+        TODAY="$(TZ="$VERSION_TIMEZONE" date +%Y%m%d)"
+        TARGET_FRAMEWORK="$(sed -n 's:.*<TargetFramework>\(.*\)</TargetFramework>.*:\1:p' src/Tyle.SaaS.Backend.Food.Api/Tyle.SaaS.Backend.Food.Api.csproj | head -1)"
+
+        if [ -z "$TARGET_FRAMEWORK" ]; then
+          TARGET_FRAMEWORK="$(sed -n 's:.*<TargetFramework>\(.*\)</TargetFramework>.*:\1:p' Directory.Build.props | head -1)"
+        fi
+
+        if [ -z "$TARGET_FRAMEWORK" ]; then
+          echo "Erro: nao foi possivel determinar TargetFramework para gerar a versao." >&2
+          exit 1
+        fi
+
+        TARGET_FRAMEWORK="${TARGET_FRAMEWORK%%;*}"
+        VERSION_CORE="$(echo "$TARGET_FRAMEWORK" | sed -E 's/^net([0-9]+).*/\1/')"
+
+        if [ -z "$VERSION_CORE" ] || [ "$VERSION_CORE" = "$TARGET_FRAMEWORK" ]; then
+          echo "Erro: TargetFramework invalido para extrair versao major: $TARGET_FRAMEWORK" >&2
+          exit 1
+        fi
+
+        RUNS_FILE="$(mktemp)"
+
+        gh api \
+          "repos/${{ github.repository }}/actions/workflows/ci-cd.yml/runs?per_page=100" \
+          > "$RUNS_FILE"
+
+        BUILD_OF_DAY="$(node -e '
+          const fs = require("fs");
+
+          const [, filePath, today, timeZone, runId] = process.argv;
+          const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+          const formatter = new Intl.DateTimeFormat("en-CA", {
+            timeZone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit"
+          });
+
+          const runs = payload.workflow_runs
+            .filter((run) => {
+              const localDate = formatter.format(new Date(run.created_at)).replaceAll("-", "");
+
+              return localDate === today && Number(run.id) <= Number(runId);
+            })
+            .sort((left, right) => Number(left.id) - Number(right.id));
+
+          const currentRunIndex = runs.findIndex((run) => String(run.id) === String(runId));
+
+          console.log(currentRunIndex >= 0 ? currentRunIndex + 1 : runs.length + 1);
+        ' "$RUNS_FILE" "$TODAY" "$VERSION_TIMEZONE" "$GITHUB_RUN_ID")"
+
+        VERSION="${VERSION_CORE}.${YEAR}.${MONTH_DAY}.${BUILD_OF_DAY}"
+
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "📦 Versão gerada: ${VERSION}"
+        echo "   Core (.NET): ${VERSION_CORE}"
+        echo "   TargetFramework: ${TARGET_FRAMEWORK}"
+        echo "   Ano: ${YEAR}"
+        echo "   MMDD+30000: ${MONTH_DAY}"
+        echo "   Build do dia: ${BUILD_OF_DAY}"
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore --force-evaluate
+
+    - name: Build solution
+      run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore /p:Version=${{ steps.generate-version.outputs.version }}
+
+    - name: Run tests
+      run: dotnet test Tyle.SaaS.Backend.Food.slnx --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity normal
+
+    - name: Publish Food.Api
+      run: |
+        echo "📦 Publicando versão ${{ steps.generate-version.outputs.version }}"
+        dotnet publish src/Tyle.SaaS.Backend.Food.Api/Tyle.SaaS.Backend.Food.Api.csproj \
+          --configuration ${{ env.BUILD_CONFIGURATION }} \
+          --output ./publish/foods-api \
+          --no-restore \
+          /p:Version=${{ steps.generate-version.outputs.version }}
+
+    - name: Create version file
+      run: |
+        echo "${{ steps.generate-version.outputs.version }}" > ./publish/foods-api/version.txt
+        cat << EOF > ./publish/foods-api/version.json
+        {
+          "version": "${{ steps.generate-version.outputs.version }}",
+          "buildDate": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "commitSha": "${{ github.sha }}",
+          "commitShort": "${GITHUB_SHA:0:7}",
+          "runNumber": "${{ github.run_number }}",
+          "repository": "${{ github.repository }}",
+          "branch": "${{ github.ref_name }}"
+        }
+        EOF
+        cat ./publish/foods-api/version.json
+
+    - name: Compress Food.Api release
+      run: |
+        cd ./publish
+        zip -r -q foods-api-${{ steps.generate-version.outputs.version }}.zip foods-api/
+        echo "✅ Release compactada: foods-api-${{ steps.generate-version.outputs.version }}.zip"
+        ls -lh foods-api-${{ steps.generate-version.outputs.version }}.zip
+
+    - name: Upload Food.Api artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: foods-api
+        path: ./publish/foods-api-*.zip
+        retention-days: 1
+
+  deploy-foods-api:
+    name: Deploy Food.Api to IIS (VPS)
+    needs: build
+    runs-on: [self-hosted, Windows, X64]
+
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: foods-api
+        path: "${{ github.workspace }}/foods-api-artifact"
+
+    - name: Extract release archive
+      shell: powershell
+      run: |
+        $archiveFile = Get-ChildItem -Path "$env:GITHUB_WORKSPACE/foods-api-artifact" -Filter "*.zip" | Select-Object -First 1
+        if ($archiveFile) {
+          Write-Host "Extraindo arquivo: $($archiveFile.Name)"
+          Expand-Archive -Path $archiveFile.FullName -DestinationPath "$env:GITHUB_WORKSPACE/foods-api-artifact" -Force
+          Write-Host "Arquivo extraido com sucesso"
+          Remove-Item $archiveFile.FullName -Force
+        } else {
+          throw "Nenhum arquivo .zip encontrado no artefato"
+        }
+
+    - name: Display version
+      env:
+        APP_VERSION: ${{ needs.build.outputs.app-version }}
+      shell: powershell
+      run: |
+        Write-Host "Deploying version: $env:APP_VERSION"
+        Get-ChildItem -Path "$env:GITHUB_WORKSPACE\foods-api-artifact\foods-api" -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object @{Name="Total MB";Expression={[math]::Round($_.Sum/1MB, 2)}}
+
+    - name: Deploy to IIS
+      env:
+        APP_VERSION: ${{ needs.build.outputs.app-version }}
+      shell: powershell
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $sourcePath = Join-Path $env:GITHUB_WORKSPACE 'foods-api-artifact\foods-api'
+        $releasePath = Join-Path $env:IIS_RELEASES_PATH $env:APP_VERSION
+        $offlineFile = Join-Path $env:IIS_SITE_PATH 'app_offline.htm'
+
+        New-Item -ItemType Directory -Path $env:IIS_RELEASES_PATH -Force | Out-Null
+        New-Item -ItemType Directory -Path $env:IIS_LOGS_PATH -Force | Out-Null
+        New-Item -ItemType Directory -Path $releasePath -Force | Out-Null
+
+        '<html><body><h1>Atualizacao em andamento</h1><p>Voltamos em instantes.</p></body></html>' | Set-Content -Path $offlineFile -Encoding UTF8
+
+        try {
+          $releaseCopy = Start-Process -FilePath robocopy -ArgumentList @(
+            $sourcePath,
+            $releasePath,
+            '/MIR',
+            '/R:2',
+            '/W:2',
+            '/NFL',
+            '/NDL',
+            '/NJH',
+            '/NJS',
+            '/NP'
+          ) -Wait -PassThru
+
+          if ($releaseCopy.ExitCode -gt 7) {
+            throw "Robocopy falhou ao copiar para o release. ExitCode=$($releaseCopy.ExitCode)"
+          }
+
+          $siteCopy = Start-Process -FilePath robocopy -ArgumentList @(
+            $releasePath,
+            $env:IIS_SITE_PATH,
+            '/MIR',
+            '/R:2',
+            '/W:2',
+            '/NFL',
+            '/NDL',
+            '/NJH',
+            '/NJS',
+            '/NP'
+          ) -Wait -PassThru
+
+          if ($siteCopy.ExitCode -gt 7) {
+            throw "Robocopy falhou ao publicar no site. ExitCode=$($siteCopy.ExitCode)"
+          }
+        }
+        finally {
+          if (Test-Path $offlineFile) {
+            Remove-Item $offlineFile -Force
+          }
+        }
+
+        try {
+          Import-Module WebAdministration
+          Restart-WebAppPool -Name $env:IIS_APP_POOL_NAME
+        }
+        catch {
+          Write-Warning "Nao foi possivel reciclar o App Pool por falta de permissao. O deploy foi concluido, mas valide a aplicacao e recicle manualmente se necessario."
+        }
+
+        Write-Host "Deployment completed successfully for version $env:APP_VERSION"
+
+    - name: Create deployment tag
+      shell: powershell
+      run: |
+        Write-Host "Version ${{ needs.build.outputs.app-version }} deployed successfully"
+        Write-Host "::notice title=Deployment Version::${{ needs.build.outputs.app-version }}"
